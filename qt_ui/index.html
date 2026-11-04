@@ -1,0 +1,1651 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PSD 修复工具</title>
+<style>
+/* ============================================================
+   PSD 修复工具 · Liquid Glass
+   技术：原生 HTML/CSS/JS，backdrop-filter 真玻璃
+   参考：design-systems (lens / overture)
+   ============================================================ */
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+:root {
+  /* 文字：浅色背景纯黑，深色背景纯白 */
+  --ink: #000000;
+  --ink-inv: #ffffff;
+
+  /* 强调色：由 setTheme() 按主题写入，进度条 / line 动画都吃这个 */
+  --accent: #3f6fe4;
+  --accent-2: #7ec2ff;
+
+  /* 玻璃参数 */
+  --glass-bg: rgba(255,255,255,0.22);
+  --glass-border: rgba(255,255,255,0.60);
+  --glass-shadow: 0 10px 40px rgba(38,58,98,0.10),
+                  inset 0 1px 0 rgba(255,255,255,0.85),
+                  inset 0 -1px 0 rgba(255,255,255,0.22);
+  --blur: 24px;
+
+  /* 圆角 */
+  --r-lg: 26px;
+  --r-md: 18px;
+  --r-sm: 12px;
+
+  /* 弹簧缓动（来自 overture 物理预设）*/
+  --spring-snap: cubic-bezier(.2,.9,.25,1.22);
+  --spring-settle: cubic-bezier(.25,.8,.3,1);
+  /* 弹簧令牌（design-systems/overture，snap 340ms / settle 570ms） */
+  --ov-spring: linear(0, 0.051, 0.17, 0.319, 0.472, 0.613, 0.734, 0.832, 0.906,
+                0.959, 0.995, 1.017, 1.029, 1.033, 1.032, 1.029, 1.024, 1.019,
+                1.014, 1.01, 1.007, 1.004, 1.002, 1.001, 1);
+  --ov-settle: linear(0, 0.029, 0.099, 0.191, 0.291, 0.392, 0.487, 0.573, 0.65,
+                0.717, 0.773, 0.82, 0.859, 0.891, 0.917, 0.937, 0.953, 0.966,
+                0.975, 0.983, 0.988, 0.992, 0.995, 0.997, 1);
+}
+
+body.dark {
+  --ink: #ffffff;
+  --ink-inv: #000000;
+  /* 注意：这里不要再定义 --accent / --accent-2。
+     body 上的变量会盖掉 html 的内联变量，导致 setTheme() 写的主题色失效。 */
+  --glass-bg: rgba(255,255,255,0.10);
+  --glass-border: rgba(255,255,255,0.22);
+  --glass-shadow: 0 10px 40px rgba(0,0,0,0.35),
+                  inset 0 1px 0 rgba(255,255,255,0.18),
+                  inset 0 -1px 0 rgba(255,255,255,0.06);
+}
+
+html, body {
+  height:100%; width:100%; overflow:hidden;
+  font-family:"Microsoft YaHei","PingFang SC",sans-serif;
+  background:#f2f5fa;
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  user-select:none;
+  cursor:default;
+}
+
+/* ============================================================
+   背景：弥散光晕
+   ============================================================ */
+#aurora {
+  position:fixed; inset:0; overflow:hidden; z-index:0;
+  background:var(--bg-base, #f2f5fa);
+  transition:background .8s ease;
+}
+.blob {
+  position:absolute; border-radius:50%;
+  filter:blur(96px);
+  will-change:transform;
+}
+.b1 { width:540px; height:540px; background:var(--blob-a,#5c7cf0);
+      left:6%; top:8%;  animation:d1 19s ease-in-out infinite; }
+.b2 { width:460px; height:460px; background:var(--blob-b,#8f74ee);
+      right:10%; top:16%; animation:d2 23s ease-in-out infinite; }
+.b3 { width:620px; height:620px; background:var(--blob-c,#7ba7f5);
+      left:28%; bottom:-14%; animation:d3 27s ease-in-out infinite; }
+
+/* 白色提亮层：把光斑压成"雾"，避免整片饱和蓝铺满 */
+#aurora::after {
+  content:'';
+  position:absolute; inset:0; pointer-events:none;
+  background:
+    radial-gradient(130% 95% at 50% -10%, rgba(255,255,255,.62) 0%, rgba(255,255,255,0) 58%),
+    linear-gradient(180deg, rgba(255,255,255,.20) 0%, rgba(255,255,255,.06) 45%, rgba(255,255,255,.16) 100%);
+}
+body.dark #aurora::after {
+  background:
+    radial-gradient(130% 95% at 50% -10%, rgba(255,255,255,.10) 0%, rgba(255,255,255,0) 60%),
+    linear-gradient(180deg, rgba(0,0,0,.10) 0%, rgba(0,0,0,.02) 45%, rgba(0,0,0,.14) 100%);
+}
+
+@keyframes d1 {
+  0%,100% { transform:translate3d(0,0,0) scale(1); }
+  33%     { transform:translate3d(110px,70px,0) scale(1.12); }
+  66%     { transform:translate3d(-60px,120px,0) scale(0.95); }
+}
+@keyframes d2 {
+  0%,100% { transform:translate3d(0,0,0) scale(1); }
+  40%     { transform:translate3d(-120px,90px,0) scale(1.08); }
+  75%     { transform:translate3d(60px,-50px,0) scale(1.15); }
+}
+@keyframes d3 {
+  0%,100% { transform:translate3d(0,0,0) scale(1); }
+  45%     { transform:translate3d(90px,-90px,0) scale(1.06); }
+  80%     { transform:translate3d(-100px,40px,0) scale(0.92); }
+}
+
+/* 深色主题 */
+body.dark #aurora { --bg-base:#150b0b; }
+body.dark .b1 { --blob-a:#b8302a; }
+body.dark .b2 { --blob-b:#7d1a16; }
+body.dark .b3 { --blob-c:#5a1210; }
+
+/* ============================================================
+   玻璃
+   ============================================================ */
+.glass {
+  background:var(--glass-bg);
+  backdrop-filter:blur(var(--blur)) saturate(155%);
+  -webkit-backdrop-filter:blur(var(--blur)) saturate(155%);
+  border:1px solid var(--glass-border);
+  border-radius:var(--r-lg);
+  box-shadow:var(--glass-shadow);
+}
+
+/* ============================================================
+   布局
+   ============================================================ */
+#app {
+  position:relative; z-index:2;
+  width:100%; height:100%;
+  /* 用 clamp 让内边距随窗口收缩，小窗口也不溢出 */
+  padding:clamp(14px, 2.2vh, 26px) clamp(18px, 2.4vw, 30px)
+          clamp(12px, 1.8vh, 22px);
+  display:flex; flex-direction:column;
+  gap:clamp(8px, 1.3vh, 14px);
+  min-height:0;
+  overflow:hidden;
+}
+
+/* ---- 顶栏 ---- */
+.head {
+  display:flex; align-items:flex-start;
+  justify-content:space-between;
+  flex:0 0 auto;
+}
+.brand { display:flex; flex-direction:column; gap:3px; }
+.brand-en {
+  font-family:"Century Gothic","Segoe UI",sans-serif;
+  font-size:clamp(24px, 3.8vh, 36px); font-weight:700;
+  letter-spacing:-0.8px; line-height:1;
+  color:var(--ink);
+}
+.brand-sub {
+  font-family:"Century Gothic","Segoe UI",sans-serif;
+  font-size:10px; font-weight:700;
+  letter-spacing:4.5px; color:var(--ink);
+  opacity:.85; margin-top:6px;
+}
+.tools { display:flex; gap:10px; align-items:center; }
+.chip {
+  display:inline-flex; align-items:center; gap:7px;
+  height:34px; padding:0 16px;
+  border-radius:17px; cursor:pointer;
+  font-size:12px; color:var(--ink);
+  background:var(--glass-bg);
+  backdrop-filter:blur(18px) saturate(150%);
+  border:1px solid var(--glass-border);
+  transition:transform .3s var(--spring-snap), background .3s;
+}
+.chip:hover { transform:scale(1.05); }
+.chip:active { transform:scale(.96); }
+.chip .dot {
+  width:7px; height:7px; border-radius:50%;
+  background:#3ec27a; box-shadow:0 0 6px #3ec27a;
+  transition:background .3s, box-shadow .3s;
+}
+.chip.paused .dot { background:#b9c4d4; box-shadow:none; }
+
+/* ---- 拖放区 ---- */
+#drop {
+  flex:0 0 clamp(84px, 12vh, 116px);
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:6px;
+  cursor:pointer;
+  transition:transform .35s var(--spring-snap),
+             background .3s, border-color .3s;
+  position:relative;
+}
+#drop:hover { transform:scale(1.008); }
+#drop.over {
+  background:rgba(120,165,240,0.30);
+  border-color:rgba(90,140,235,0.85);
+  transform:scale(1.012);
+}
+.drop-main { font-size:clamp(15px, 2.2vh, 21px); color:var(--ink); font-weight:500; }
+.drop-sub {
+  font-family:"Century Gothic","Segoe UI",sans-serif;
+  font-size:11px; font-weight:700;
+  letter-spacing:4px; color:var(--ink); opacity:.7;
+}
+.drop-file { font-size:17px; font-weight:600; color:var(--ink);
+             max-width:80%; overflow:hidden; text-overflow:ellipsis;
+             white-space:nowrap; }
+.drop-meta { font-size:12px; color:var(--ink); opacity:.7; }
+
+/* ---- 操作栏 ---- */
+.bar {
+  flex:0 0 auto;
+  display:flex; align-items:center;
+  justify-content:space-between; gap:12px;
+}
+.opt {
+  display:flex; align-items:center; gap:9px;
+  cursor:pointer; font-size:13px; color:var(--ink);
+}
+.box {
+  width:17px; height:17px; border-radius:5px;
+  border:2px solid rgba(90,120,160,.65);
+  display:flex; align-items:center; justify-content:center;
+  transition:background .25s var(--spring-snap),
+             border-color .25s;
+}
+.box.on { background:#3a6ee0; border-color:#3a6ee0; }
+.box svg { opacity:0; transition:opacity .2s; }
+.box.on svg { opacity:1; }
+
+.btns { display:flex; gap:10px; }
+.btn {
+  height:clamp(32px,4vh,38px); padding:0 clamp(18px,2vw,28px);
+  border-radius:999px;
+  border:1px solid var(--glass-border);
+  font-size:13px; font-weight:600; color:var(--ink);
+  cursor:pointer; display:inline-flex;
+  align-items:center; justify-content:center;
+  background:var(--glass-bg);
+  backdrop-filter:blur(18px) saturate(150%);
+  transition:transform .3s var(--spring-snap),
+             background .3s, opacity .3s;
+}
+.btn:hover { transform:scale(1.045); }
+.btn:active { transform:scale(.965); }
+.btn.primary { background:rgba(70,128,240,.82); }
+.btn.primary:hover { background:rgba(70,128,240,.95); }
+.btn:disabled {
+  opacity:.40;
+  cursor:not-allowed;
+  transform:none !important;
+  background:rgba(200,210,225,.45) !important;
+  border-color:rgba(180,195,215,.5) !important;
+  box-shadow:none !important;
+  backdrop-filter:blur(8px);
+  color:rgba(0,0,0,.45) !important;
+}
+body.dark .btn:disabled {
+  background:rgba(255,255,255,.10) !important;
+  border-color:rgba(255,255,255,.14) !important;
+  color:rgba(255,255,255,.40) !important;
+}
+
+/* ---- 主体 ---- */
+.body-row {
+  flex:1 1 auto; display:flex; gap:16px;
+  min-height:0;
+}
+.col-left {
+  flex:1.62; display:flex; flex-direction:column; gap:14px;
+  min-width:0;
+}
+.col-right {
+  flex:1; display:flex; flex-direction:column;
+  min-width:0; padding:22px 24px;
+}
+
+/* ---- 面板 ---- */
+.panel {
+  display:flex; flex-direction:column;
+  padding:clamp(12px,1.8vh,20px) clamp(16px,1.8vw,24px);
+  min-height:0;
+}
+.panel-head {
+  display:flex; align-items:baseline; gap:10px;
+  flex:0 0 auto;
+}
+.panel-title { font-size:15px; font-weight:700; color:var(--ink); }
+.panel-en {
+  font-family:"Century Gothic","Segoe UI",sans-serif;
+  font-size:9px; font-weight:700;
+  letter-spacing:2.5px; color:var(--ink); opacity:.6;
+}
+.panel-right { margin-left:auto; font-size:12px; color:var(--ink);
+               font-weight:600; transition:opacity .13s ease; }
+
+/* ---- SpinKit sk-chase（结构改成 <i>，颜色跟随容器 currentColor）---- */
+.chase {
+  position:relative;
+  width:15px; height:15px;
+  flex:0 0 auto;
+  display:none;
+  color:var(--ink);
+  opacity:.7;
+  animation:chase-spin 3.2s infinite linear both;
+}
+.chase.on { display:inline-block; }
+.chase i {
+  position:absolute; left:0; top:0;
+  width:100%; height:100%;
+  animation:chase-dot 2.56s infinite ease-in-out both;
+}
+.chase i:before {
+  content:''; display:block;
+  width:25%; height:25%;
+  background:currentColor;
+  border-radius:100%;
+  animation:chase-dot-in 2.56s infinite ease-in-out both;
+}
+.chase i:nth-child(1), .chase i:nth-child(1):before { animation-delay:-1.1s; }
+.chase i:nth-child(2), .chase i:nth-child(2):before { animation-delay:-1.0s; }
+.chase i:nth-child(3), .chase i:nth-child(3):before { animation-delay:-.9s; }
+.chase i:nth-child(4), .chase i:nth-child(4):before { animation-delay:-.8s; }
+.chase i:nth-child(5), .chase i:nth-child(5):before { animation-delay:-.7s; }
+.chase i:nth-child(6), .chase i:nth-child(6):before { animation-delay:-.6s; }
+
+@keyframes chase-spin { 100% { transform:rotate(360deg); } }
+@keyframes chase-dot  { 80%, 100% { transform:rotate(360deg); } }
+@keyframes chase-dot-in { 0%, 100% { transform:scale(1); } 50% { transform:scale(.4); } }
+
+/* 按钮内的 spinner + 收缩动画
+   用 max-width 收放而不是直接改 width：auto ↔ 定值 之间没法过渡，
+   收放内边距和文字宽度，按钮就会自己平滑地缩成圆。 */
+.btn.primary {
+  gap:0;
+  transition:padding .38s var(--spring-settle);
+}
+.btn .btn-chase {
+  display:inline-block;
+  width:20px; height:20px;
+  max-width:0;                 /* 收起态 */
+  opacity:0;
+  overflow:hidden;
+  color:#fff;
+  /* 宽度先撑开，透明度等文字淡完再起（.2s 起、.22s 走完） */
+  transition:max-width .28s var(--spring-settle) .18s,
+             opacity .22s ease .2s;
+}
+.btn .btn-chase.on { max-width:20px; opacity:.95; }
+
+.btn.primary #fix-label {
+  display:inline-block;
+  max-width:220px;
+  overflow:hidden;
+  white-space:nowrap;
+  /* 文字先淡出（.18s），淡得差不多了才开始收宽度 */
+  transition:opacity .18s ease,
+             max-width .28s var(--spring-settle) .14s;
+}
+.btn.primary.busy #fix-label { max-width:0; opacity:0; }
+.btn.primary.busy { padding:0 8px; }   /* 20px spinner + 16px = 36px，接近按钮高度 */
+
+@media (prefers-reduced-motion: reduce) {
+  .chase, .chase i, .chase i:before { animation:none !important; }
+  .chase { display:none !important; }
+}
+
+#diag { flex:1 1 auto; }
+#diag-body {
+  flex:1 1 auto; overflow-y:auto;
+  margin-top:14px; font-size:13px;
+  line-height:1.75; color:var(--ink);
+  padding-right:4px;
+}
+#diag-body::-webkit-scrollbar { width:6px; }
+#diag-body::-webkit-scrollbar-thumb {
+  background:rgba(120,150,190,.35); border-radius:3px;
+}
+.issue { display:flex; gap:10px; margin-bottom:9px; }
+.issue-tag {
+  flex:0 0 auto; font-size:10px; font-weight:700;
+  padding:1px 8px; border-radius:9px; height:18px;
+  line-height:16px; color:var(--ink);
+  border:1px solid currentColor;
+}
+.issue-tag.err { opacity:.95; }
+.issue-tag.warn { opacity:.7; }
+.issue-text { flex:1; }
+.issue-detail { opacity:.62; font-size:11.5px; margin-top:2px; }
+
+/* ---- 进度面板 ---- */
+#prog { flex:0 0 auto; }
+#prog .panel-head { cursor:pointer; }
+#prog-list {
+  overflow:hidden;
+  transition:max-height .55s var(--spring-settle),
+             margin-top .55s var(--spring-settle),
+             opacity .4s;
+  max-height:0; opacity:0; margin-top:0;
+}
+#prog.open #prog-list {
+  max-height:320px; opacity:1; margin-top:14px;
+}
+.prog-empty {
+  font-size:12.5px; color:var(--ink); opacity:.55;
+  padding:16px 4px; text-align:center;
+}
+.handle {
+  width:44px; height:4px; border-radius:2px;
+  background:rgba(140,165,195,.55);
+  margin:10px auto 0; flex:0 0 auto;
+}
+
+.row {
+  display:flex; align-items:center; gap:12px;
+  height:26px; font-size:12px;
+}
+.row-idx {
+  font-family:Consolas,monospace; font-size:11px;
+  opacity:.5; width:20px; flex:0 0 auto;
+}
+.row-name {
+  width:190px; flex:0 0 auto;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.row-bar {
+  flex:1; height:5px; border-radius:3px;
+  background:rgba(180,198,218,.42);
+  overflow:hidden;
+  position:relative;
+}
+
+/* whirl line 的做法：一条实心矩形靠 background-position 左右来回走 */
+.row-line {
+  display:block; height:100%; width:100%;
+  background-repeat:no-repeat;
+  background-size:46px 100%;
+  background-position:-46px 0;
+}
+.row-line.run {
+  background-image:linear-gradient(90deg, var(--accent), var(--accent));
+  animation:row-line .75s infinite alternate ease-in-out;
+}
+.row-line.done {
+  /* 已完成：整条淡淡铺满，不抢眼，但和"等待"的空轨分得开 */
+  background-image:linear-gradient(90deg, var(--accent), var(--accent));
+  background-size:100% 100%;
+  background-position:0 0;
+  opacity:.22;
+}
+@keyframes row-line {
+  from { background-position:-46px 0; }
+  to   { background-position:calc(100% + 46px) 0; }
+}
+/* 深色主题下 22% 太虚，提一点保证能看出"已完成" */
+body.dark .row-line.done { opacity:.34; }
+body.dark .row-bar { background:rgba(255,255,255,.14); }
+.row-detail {
+  width:74px; flex:0 0 auto; text-align:right;
+  font-size:11px; opacity:.65;
+}
+
+/* ---- 右栏 ---- */
+.file-name {
+  font-size:15px; font-weight:600; color:var(--ink);
+  margin-top:18px; word-break:break-all;
+}
+.kv {
+  display:flex; justify-content:space-between;
+  font-size:12.5px; margin-top:13px;
+}
+.kv .k { opacity:.6; }
+.kv .v { font-weight:500; }
+.divider {
+  height:1px; background:rgba(150,175,205,.30);
+  margin:18px 0 4px;
+}
+.sect-title {
+  font-size:13px; font-weight:700; margin-top:16px;
+}
+.layer-row {
+  display:flex; gap:10px; font-size:12px;
+  margin-top:9px; align-items:center;
+}
+
+/* ---- 最近文件列表 ----
+   × 的悬停反馈取自素材库 doytsujin/css/base.css L316：
+   平时是 1.5px 内描边的空环，悬停时整块填充 + 颜色反转。
+   出现动画取自 loaders-css/demo.css L63 的 .tooltip：
+   opacity 0→1 同时位移 10px，200ms ease（显隐用库里原值）。
+   按下反馈用项目自己的弹簧（--spring-snap），跟旁边按钮一致。 */
+.recent-list { margin-top:14px; display:flex; flex-direction:column; }
+
+.recent-item {
+  position:relative;
+  display:flex; flex-direction:column; gap:3px;
+  padding:9px 32px 9px 11px;   /* 右侧 32px 让开 × */
+  margin:0 -8px;               /* 视觉上贴齐左右，但热区更宽 */
+  border-radius:10px;
+  cursor:pointer;
+  transition:background .18s ease;
+}
+.recent-item:hover { background:rgba(120,160,230,.10); }
+body.dark .recent-item:hover { background:rgba(255,255,255,.07); }
+
+.recent-name {
+  font-size:12.5px; font-weight:600; color:var(--ink);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.recent-meta {
+  font-size:11px; color:var(--ink); opacity:.55;
+  font-variant-numeric:tabular-nums;
+}
+/* 文件已经不在了（被删/移动）：变暗 + 划线，点一下会从列表里清掉 */
+.recent-item.gone .recent-name { opacity:.45; text-decoration:line-through; }
+
+/* × ：内描边空环 → 悬停整块填充（doyutsujin 那套） */
+.recent-del {
+  position:absolute; right:6px; top:50%;
+  width:18px; height:18px;
+  margin-top:-9px;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:50%;
+  box-shadow:inset 0 0 0 1.5px rgba(90,120,160,.45);
+  color:var(--ink);
+  font-size:12px; line-height:1; font-weight:700;
+  opacity:0;
+  transform:translate3d(6px, 0, 0);   /* 淡入 + 小位移（库里的 .tooltip 写法） */
+  pointer-events:none;
+  transition:opacity .2s ease,
+             transform .2s ease;
+}
+/* 行悬停时才浮现 */
+.recent-item:hover .recent-del {
+  opacity:.75;
+  transform:translate3d(0, 0, 0);
+  pointer-events:auto;
+}
+/* × 自己的悬停：整块填充 + 反色（doyutsujin L328 的 :hover） */
+.recent-del:hover {
+  opacity:1 !important;
+  background:var(--accent);
+  box-shadow:inset 0 0 0 1.5px var(--accent);
+  color:#fff;
+}
+/* 按下用项目弹簧 */
+.recent-del:active {
+  transform:scale(.92);
+  transition:transform .18s var(--spring-snap);
+}
+body.dark .recent-del {
+  box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.30);
+}
+body.dark .recent-del:hover { color:#0b0f16; }
+
+@media (prefers-reduced-motion: reduce) {
+  .recent-del, .recent-item { transition-duration:.01ms !important; }
+}
+.layer-idx {
+  font-family:Consolas,monospace; font-size:10.5px;
+  opacity:.45; width:20px;
+}
+.layer-name {
+  flex:1; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.hint {
+  font-size:12.5px; opacity:.62; margin-top:16px;
+}
+
+/* ---- 修复完成状态 ---- */
+.done-badge {
+  display:inline-flex; align-items:center; gap:7px;
+  padding:4px 12px; border-radius:999px;
+  background:rgba(42,165,100,.16);
+  border:1px solid rgba(42,165,100,.45);
+  font-size:11.5px; font-weight:600; color:#1a7a4a;
+  margin-left:10px;
+}
+body.dark .done-badge {
+  background:rgba(42,165,100,.22);
+  border-color:rgba(90,220,150,.5);
+  color:#7ee0a8;
+}
+.done-banner {
+  display:flex; align-items:center; gap:10px;
+  padding:12px 16px; margin-bottom:12px;
+  border-radius:12px;
+  background:rgba(42,165,100,.12);
+  border:1px solid rgba(42,165,100,.35);
+}
+body.dark .done-banner {
+  background:rgba(42,165,100,.16);
+  border-color:rgba(90,220,150,.35);
+}
+.done-banner-icon {
+  width:22px; height:22px; border-radius:50%;
+  background:#2aa564; color:#fff;
+  display:flex; align-items:center; justify-content:center;
+  font-size:14px; font-weight:700; flex:0 0 auto;
+}
+.done-banner-text { flex:1; font-size:12.5px; line-height:1.5; }
+.done-banner-title { font-weight:600; }
+.done-banner-sub { font-size:11.5px; opacity:.7; margin-top:2px; }
+
+.out-file {
+  font-size:14px; font-weight:600; color:#1a7a4a;
+  margin-top:4px; word-break:break-all;
+}
+body.dark .out-file { color:#7ee0a8; }
+
+.size-compare {
+  display:flex; align-items:center; gap:8px;
+  margin-top:14px; font-size:12.5px;
+}
+.size-before { opacity:.55; }
+.size-arrow { opacity:.4; }
+.size-after { font-weight:600; }
+.size-save {
+  font-size:11px; padding:1px 7px; border-radius:8px;
+  background:rgba(42,165,100,.18); color:#1a7a4a;
+  font-weight:600;
+}
+body.dark .size-save {
+  background:rgba(42,165,100,.25); color:#7ee0a8;
+}
+
+/* ---- 底部总进度 ---- */
+.foot {
+  flex:0 0 auto; min-height:0;
+  display:flex; flex-direction:column; gap:9px;
+  padding:0 4px;
+}
+
+.track {
+  position:relative;
+  height:8px; border-radius:999px;
+  background:rgba(150,172,200,.24);
+  box-shadow:inset 0 1px 2px rgba(40,60,100,.20),
+             inset 0 -1px 0 rgba(255,255,255,.60);
+  overflow:hidden;
+  transition:box-shadow .4s;
+}
+body.dark .track {
+  background:rgba(255,255,255,.12);
+  box-shadow:inset 0 1px 2px rgba(0,0,0,.45),
+             inset 0 -1px 0 rgba(255,255,255,.10);
+}
+
+.track-fill {
+  position:absolute; left:0; top:0;
+  height:100%; width:0%; border-radius:999px;
+  background:linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+  box-shadow:0 0 10px rgba(80,145,255,.55),
+             0 0 22px rgba(80,145,255,.26);
+  z-index:1;
+  will-change:width;
+  overflow:hidden;
+}
+
+/* 流动高光：只在处理中显示 */
+.track-fill::after {
+  content:'';
+  position:absolute; inset:0;
+  background:linear-gradient(100deg,
+    transparent 0%, rgba(255,255,255,.35) 42%,
+    rgba(255,255,255,.92) 50%,
+    rgba(255,255,255,.35) 58%, transparent 100%);
+  transform:translateX(-120%);
+  opacity:0;
+  transition:opacity .3s;
+}
+.track.running .track-fill::after {
+  opacity:1;
+  animation:sweep 1.9s linear infinite;
+}
+@keyframes sweep {
+  from { transform:translateX(-120%); }
+  to   { transform:translateX(120%); }
+}
+
+/* 前端亮点：让填充像有"头" */
+.track-fill::before {
+  content:'';
+  position:absolute; right:-1px; top:50%;
+  width:18px; height:18px; margin-top:-9px; border-radius:50%;
+  background:radial-gradient(circle,
+    rgba(255,255,255,.98) 0%, rgba(180,220,255,.6) 40%, rgba(126,194,255,0) 72%);
+  opacity:0;
+  transition:opacity .3s;
+}
+.track.running .track-fill::before { opacity:1; }
+
+/* 完成态：变绿 + 一次性扫光 */
+.track.done .track-fill {
+  background:linear-gradient(90deg,#1f9e5c 0%,#2ec27e 60%,#63e0a6 100%);
+  box-shadow:0 0 12px rgba(60,200,130,.55),
+             0 0 26px rgba(60,200,130,.24);
+}
+.track.done .track-fill::before { opacity:0; }
+.track.done .track-fill::after {
+  opacity:1;
+  animation:sweep .9s cubic-bezier(.3,.7,.4,1) 1;
+}
+
+/* 底部状态行 */
+.status-row {
+  display:flex; align-items:baseline; gap:14px;
+}
+.status {
+  flex:1; min-width:0;
+  font-size:11.5px; color:var(--ink); opacity:.62;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.meter {
+  flex:0 0 auto; display:flex; align-items:baseline; gap:9px;
+}
+.pct {
+  font-family:"Century Gothic","Segoe UI",sans-serif;
+  font-size:15px; font-weight:700; letter-spacing:.4px;
+  color:var(--ink);
+  font-variant-numeric:tabular-nums;
+  min-width:52px; text-align:right;
+}
+.cnt {
+  font-family:Consolas,monospace;
+  font-size:11px; letter-spacing:.5px;
+  color:var(--ink); opacity:.45;
+  font-variant-numeric:tabular-nums;
+  min-width:52px;
+}
+.track.done ~ .status-row .cnt { opacity:.7; }
+
+/* ---- 切换主题过渡 ---- */
+.flash {
+  position:fixed; inset:0; z-index:99;
+  background:#fff; pointer-events:none;
+  opacity:0;
+}
+
+/* ============================================================
+   开机动画（F 方案：静止字标 + 同心扩散环）
+   总长 3.6s（原图标版 4.6s，去掉图标后缩短 1s）
+     0ms     字标已在（opacity:1）+ 第 1 环出发
+     440ms   第 2 环
+     880ms   第 3 环（最淡，余韵）
+     1420ms  字标淡出
+     1560ms  浅灰白场退场 / 弥散背景显影式渐入
+     2280ms  玻璃面板渐入
+
+   设计要点（改之前先读）：
+   1. 去掉图标后，首帧的视觉锚点是**字标**。它必须 opacity:1 起手，
+      不能从 0 淡入 —— WebEngine 首帧前有约 200ms 空白，
+      从 0 淡入会看到「先一片纯色、再冒出文字」。这是原代码里
+      图标「不从 0 淡入」的同一条理由，换成字标同样成立。
+   2. 字标全程**不位移、不缩放**，只把字距从 5.5px 舒展到 7px。
+      它是静止的锚：屏幕在忙，但界面很稳。
+   3. 三圈环与字标**同心**，z-index 压在字下面（1），字在上面（2），
+      所以环穿过文字时被字压住，不会糊成一团。
+   4. 环的透明度峰值逐圈递减（.70 / .50 / .32），h3 只是余韵不抢戏。
+   5. 底色用 #e9eef6 而不是纯白，与窗口底色/QPalette/QSS 三处保持一致，
+      否则 WebEngine 首帧那 200ms 会看到「先白一下」。
+   缓动曲线取自 design-systems/overture 的弹簧令牌。
+   ============================================================ */
+#boot {
+  position:fixed; inset:0; z-index:900;
+  display:flex; align-items:center; justify-content:center;
+  pointer-events:all;
+  animation:bootGone 0s linear 3.65s forwards;
+}
+@keyframes bootGone { to { visibility:hidden; } }
+
+#boot-veil {
+  position:absolute; inset:0;
+  background:#e9eef6;
+  z-index:0;
+  animation:bootVeilOut 1.05s var(--ov-settle) 1.56s both;
+}
+@keyframes bootVeilOut {
+  from { opacity:1; }
+  to   { opacity:0; }
+}
+
+/* 三圈环：与字标同心，压在字下面 */
+#boot-mark {
+  position:absolute;
+  left:50%; top:50%;
+  width:0; height:0;
+  z-index:1;
+  pointer-events:none;
+}
+.boot-halo {
+  position:absolute;
+  left:0; top:0;
+  width:clamp(96px, 16vh, 132px);
+  height:clamp(96px, 16vh, 132px);
+  border-radius:50%;
+  border:1px solid #b6c4da;
+  transform:translate(-50%,-50%) scale(.28);
+  will-change:transform, opacity;
+  animation:bootHaloOut 1.72s var(--ov-settle) 0s both;
+}
+.boot-halo.h2 { border-color:#c8d3e4; animation-delay:.44s; }
+.boot-halo.h3 { border-color:#d8e0ec; animation-delay:.88s; }
+
+@keyframes bootHaloOut {
+  0%   { opacity:0; transform:translate(-50%,-50%) scale(.28); }
+  22%  { opacity:.70; }
+  100% { opacity:0; transform:translate(-50%,-50%) scale(3.4); }
+}
+.boot-halo.h2 { animation-name:bootHaloOut2; }
+@keyframes bootHaloOut2 {
+  0%   { opacity:0; transform:translate(-50%,-50%) scale(.28); }
+  22%  { opacity:.50; }
+  100% { opacity:0; transform:translate(-50%,-50%) scale(3.9); }
+}
+.boot-halo.h3 { animation-name:bootHaloOut3; }
+@keyframes bootHaloOut3 {
+  0%   { opacity:0; transform:translate(-50%,-50%) scale(.28); }
+  22%  { opacity:.32; }
+  100% { opacity:0; transform:translate(-50%,-50%) scale(4.4); }
+}
+
+/* 字标：静止的锚，压在环上面。不位移、不缩放 */
+#boot-word {
+  position:absolute;
+  left:50%; top:50%;
+  transform:translate(-50%,-50%);
+  z-index:2;
+  font-family:"Century Gothic","Segoe UI",sans-serif;
+  font-size:13px; font-weight:700;
+  letter-spacing:7px; text-indent:7px;
+  color:#3a4558;
+  white-space:nowrap;
+  animation:bootWordAnchor 1.40s var(--ov-settle) 0s both,
+            bootWordOut .46s ease 1.42s both;
+}
+@keyframes bootWordAnchor {
+  /* 首帧 opacity:1 —— 见顶部说明第 1 条 */
+  from { opacity:1; letter-spacing:5.5px; text-indent:5.5px; }
+  to   { opacity:1; letter-spacing:7px;   text-indent:7px; }
+}
+@keyframes bootWordOut {
+  from { opacity:1; }
+  to   { opacity:0; }
+}
+
+/* 弥散背景：1.56s 起，显影式由虚到实 */
+#aurora {
+  animation:auroraIn 1.40s var(--ov-settle) 1.56s both;
+}
+@keyframes auroraIn {
+  from { opacity:0; filter:blur(24px); }
+  60%  { opacity:.86; }
+  to   { opacity:1; filter:blur(0px); }
+}
+
+/* 玻璃面板：2.28s 起，**原位淡入**
+   不要加 translateY：开机动画整体是「静止 + 扩散」的沉稳节奏，
+   面板从下往上挪会和字标的「不位移」原则打架，看着像两套速度。
+   也不加 scale：缩放会让玻璃边缘的高光在动画期间重新采样，有细微抖动。 */
+#app {
+  animation:appIn 1.30s var(--ov-settle) 2.28s both;
+}
+@keyframes appIn {
+  from { opacity:0; }
+  to   { opacity:1; }
+}
+
+/* 系统关闭动画时直接落位，不做开机动画 */
+@media (prefers-reduced-motion: reduce) {
+  #boot { display:none; }
+  #aurora, #app, #boot-word, #boot-veil, .boot-halo { animation:none !important; }
+}
+</style>
+</head>
+<body>
+
+<!-- 开机动画（F 方案）：浅灰白场 + 静止字标 + 同心扩散环
+     字标首帧就在（opacity:1），不能从 0 淡入 —— 见上方 CSS 注释第 1 条 -->
+<div id="boot">
+  <div id="boot-veil"></div>
+  <div id="boot-mark">
+    <div class="boot-halo"></div>
+    <div class="boot-halo h2"></div>
+    <div class="boot-halo h3"></div>
+  </div>
+  <div id="boot-word">PSD REPAIR</div>
+</div>
+
+<div id="aurora">
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+</div>
+
+<div id="app">
+
+  <!-- 顶栏 -->
+  <div class="head">
+    <div class="brand">
+      <div class="brand-en">PSD REPAIR</div>
+      <div class="brand-sub">DETECT · FIX · EXPORT</div>
+    </div>
+    <div class="tools">
+      <div class="chip" id="btn-static">
+        <span class="dot" id="static-dot"></span>
+        <span id="static-label">流动</span>
+      </div>
+      <div class="chip" id="btn-theme"><span id="theme-label">冰蓝青</span></div>
+    </div>
+  </div>
+
+  <!-- 拖放区 -->
+  <div class="glass" id="drop">
+    <div class="drop-main" id="drop-main">拖入 PSD 文件</div>
+    <div class="drop-sub" id="drop-sub">OR CLICK TO SELECT</div>
+  </div>
+
+  <!-- 操作栏 -->
+  <div class="bar">
+    <div class="opt" id="opt-trim">
+      <div class="box on" id="trim-box">
+        <svg width="11" height="11" viewBox="0 0 12 12">
+          <path d="M2 6l3 3 5-6" stroke="#fff" stroke-width="2"
+                fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <span>裁切图层到内容范围</span>
+    </div>
+    <div class="btns">
+      <button class="btn" id="btn-open" disabled>打开文件夹</button>
+      <button class="btn primary" id="btn-fix" disabled>
+        <span class="chase btn-chase" id="fix-spin">
+          <i></i><i></i><i></i><i></i><i></i><i></i>
+        </span>
+        <span id="fix-label">开始修复</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- 主体 -->
+  <div class="body-row">
+    <div class="col-left">
+      <div class="glass panel" id="diag">
+        <div class="panel-head">
+          <span class="panel-title">检测结果</span>
+          <span class="panel-en">DIAGNOSIS</span>
+          <span class="panel-right" id="diag-summary"></span>
+        </div>
+        <div id="diag-body">把 PSD 拖入上方区域开始检测</div>
+      </div>
+
+      <div class="glass panel" id="prog">
+        <div class="panel-head" id="prog-head">
+          <span class="panel-title">修复进度</span>
+          <span class="panel-en">PROGRESS</span>
+          <span class="chase" id="prog-spin">
+            <i></i><i></i><i></i><i></i><i></i><i></i>
+          </span>
+          <span class="panel-right" id="prog-stage"></span>
+        </div>
+        <div id="prog-list"></div>
+        <div class="handle"></div>
+      </div>
+    </div>
+
+    <div class="glass col-right" id="right">
+      <div class="panel-head">
+        <span class="panel-title">当前文件</span>
+        <span class="panel-en">FILE</span>
+      </div>
+      <div id="right-body">
+        <div class="hint">尚未载入文件</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 底部 -->
+  <div class="foot">
+    <div class="track" id="track">
+      <div class="track-fill" id="track-fill"></div>
+    </div>
+    <div class="status-row">
+      <div class="status" id="status">等待文件</div>
+      <div class="meter">
+        <span class="cnt" id="cnt">—</span>
+        <span class="pct" id="pct">0%</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ============================================================
+   状态
+   ============================================================ */
+const S = {
+  file: null,
+  probe: null,
+  issues: [],
+  layers: [],
+  progress: 0,
+  stage: '',
+  status: '等待文件',
+  trim: true,
+  paused: false,
+  theme: '冰蓝青',
+  busy: false,
+  outFile: null,     // 修复后的文件名
+  outMB: 0,          // 修复后的大小
+  doneCount: 0,      // 复核剩余问题数
+  hasIssues: false,
+  recent: [],        // 最近打开的文件（由 Python 侧推过来）
+};
+
+const THEMES = ['冰蓝青', '紫蓝粉', '红黑', '石墨'];
+
+/* 每个主题一套完整配色：底色 + 三个光斑色 */
+const THEME_COLORS = {
+  '冰蓝青': {
+    base: '#f2f5fa',
+    b1: '#5c7cf0',   // 主光斑：蓝
+    b2: '#8f74ee',   // 副光斑：紫
+    b3: '#7ba7f5',   // 第三光斑：浅蓝
+    accent: '#3f6fe4', accent2: '#7ec2ff',
+    dark: false
+  },
+  '紫蓝粉': {
+    base: '#faf5fc',
+    b1: '#a06ef0',   // 紫
+    b2: '#e868c8',   // 粉
+    b3: '#6b8ef5',   // 蓝
+    accent: '#e878c8', accent2: '#f6b4e2',   // 靠近背景的粉，比背景粉再亮一档保证对比
+    dark: false
+  },
+  '红黑': {
+    base: '#150b0b',
+    b1: '#b8302a',   // 深红
+    b2: '#7d1a16',   // 暗红
+    b3: '#5a1210',   // 极暗红
+    accent: '#c98a5a', accent2: '#efc094',   // 褐金，在深褐底上有对比
+    dark: true
+  },
+  '石墨': {
+    base: '#eef0f4',
+    b1: '#8b9ab8',   // 冷灰蓝
+    b2: '#a8b4c8',   // 浅灰
+    b3: '#6e7d99',   // 深灰
+    accent: '#5d6b85', accent2: '#9aa8c2',
+    dark: false
+  }
+};
+
+/* ============================================================
+   DOM
+   ============================================================ */
+const $ = id => document.getElementById(id);
+const elDrop = $('drop'), elDropMain = $('drop-main'), elDropSub = $('drop-sub');
+const elDiagBody = $('diag-body'), elDiagSum = $('diag-summary');
+const elProg = $('prog'), elProgList = $('prog-list'), elProgStage = $('prog-stage');
+const elRightBody = $('right-body');
+const elTrack = $('track-fill'), elTrackBar = $('track'), elPct = $('pct');
+const elCnt = $('cnt');
+const elStatus = $('status');
+const elFix = $('btn-fix'), elOpen = $('btn-open');
+const elFixLabel = $('fix-label'), elFixSpin = $('fix-spin'), elProgSpin = $('prog-spin');
+
+// 按钮文字在 span 里，直接改 textContent 会把 spinner 冲掉
+function setFixLabel(t) {
+  if (elFixLabel) elFixLabel.textContent = t;
+}
+function setSpinning(on) {
+  if (elFixSpin) elFixSpin.classList.toggle('on', !!on);
+  if (elFix) elFix.classList.toggle('busy', !!on);
+}
+const elTrimBox = $('trim-box');
+
+/* ============================================================
+   渲染
+   ============================================================ */
+function setStatus(t) {
+  S.status = t;
+  elStatus.textContent = t;
+}
+
+/* 引擎分六段跑，每段都从 0 数到 total。直接拿 i/total 会让进度条
+   在进入写入阶段时打回 0 重来。按阶段分配权重区间，进度就单调上升。 */
+const STAGE_RANGE = {
+  '解析文件': [0.00, 0.02],
+  '解码图层': [0.02, 0.34],
+  '裁切图层': [0.34, 0.52],
+  '准备图层': [0.52, 0.58],
+  '写入文件': [0.58, 0.95],
+  '复核':     [0.95, 1.00]
+};
+
+function mapProgress(raw) {
+  const r = STAGE_RANGE[S.stage];
+  const v = Math.max(0, Math.min(1, raw));
+  if (!r) return v;
+  return r[0] + (r[1] - r[0]) * v;
+}
+
+function renderDiag() {
+  if (!S.probe) {
+    elDiagBody.innerHTML = '把 PSD 拖入上方区域开始检测';
+    elDiagSum.textContent = '';
+    return;
+  }
+  const errs = S.issues.filter(i => i.sev === 'error').length;
+  const warns = S.issues.length - errs;
+
+  // 修复完成后显示横幅
+  const banner = S.outFile ? `
+    <div class="done-banner">
+      <div class="done-banner-icon">✓</div>
+      <div class="done-banner-text">
+        <div class="done-banner-title">修复完成</div>
+        <div class="done-banner-sub">
+          已导出 ${esc(S.outFile)}（${S.outMB.toFixed(2)} MB）
+          ${S.hasIssues ? '· 复核剩 ' + S.doneCount + ' 处提示' : '· 结构校验通过'}
+        </div>
+      </div>
+    </div>` : '';
+
+  if (!S.issues.length) {
+    elDiagBody.innerHTML = banner +
+      '<div class="issue"><span class="issue-text">未发现结构问题，文件健康</span></div>';
+    elDiagSum.textContent = '结构健康';
+    return;
+  }
+  elDiagSum.textContent = S.outFile
+    ? `已修复 · 原 ${S.issues.length} 个问题`
+    : `${S.issues.length} 个问题 · ${errs} 错误 / ${warns} 警告`;
+  elDiagBody.innerHTML = banner + S.issues.map((it, i) => `
+    <div class="issue">
+      <span class="issue-tag ${it.sev}">${it.sev === 'error' ? '错误' : '警告'}</span>
+      <span class="issue-text">${i + 1}. ${esc(it.title)}
+        ${it.detail ? `<div class="issue-detail">${esc(it.detail)}</div>` : ''}
+      </span>
+    </div>`).join('');
+}
+
+function renderRight() {
+  if (!S.probe) {
+    // 空状态：有最近记录就列出来，没有才显示「尚未载入文件」
+    if (S.recent && S.recent.length) {
+      elRightBody.innerHTML = `<div class="recent-list">${
+        S.recent.map((it, i) => `
+          <div class="recent-item${it.exists ? '' : ' gone'}" data-i="${i}">
+            <span class="recent-name">${esc(it.name)}</span>
+            <span class="recent-meta">${fmtSize(it.size)}${it.time ? ' · ' + fmtAgo(it.time) : ''}</span>
+            <span class="recent-del" data-del="${i}" title="从列表移除">×</span>
+          </div>`).join('')
+      }</div>`;
+    } else {
+      elRightBody.innerHTML = `
+        <div class="hint">尚未载入文件</div>`;
+    }
+    return;
+  }
+
+  // ---- 修复完成后，右栏显示输出文件 ----
+  if (S.outFile) {
+    const before = (S.probe.size / 1024 / 1024);
+    const after = S.outMB;
+    const savePct = before > 0
+      ? Math.round((1 - after / before) * 100) : 0;
+    let html = `
+      <div class="kv" style="margin-top:0">
+        <span class="k">状态</span>
+        <span class="v" style="color:#1a7a4a;font-weight:700">✓ 已修复</span>
+      </div>
+      <div class="out-file">${esc(S.outFile)}</div>
+      <div class="size-compare">
+        <span class="size-before">${before.toFixed(2)} MB</span>
+        <span class="size-arrow">→</span>
+        <span class="size-after">${after.toFixed(2)} MB</span>
+        ${savePct > 0 ? `<span class="size-save">省 ${savePct}%</span>` : ''}
+      </div>
+      <div class="divider"></div>
+      <div class="kv"><span class="k">原文件</span>
+        <span class="v" style="font-size:11.5px;opacity:.7">${esc(S.probe.filename || '')}</span></div>
+      <div class="kv"><span class="k">画布</span>
+        <span class="v">${S.probe.width} × ${S.probe.height}</span></div>
+      <div class="kv"><span class="k">图层</span>
+        <span class="v">${S.layers.length} 个</span></div>
+      <div class="kv"><span class="k">复核</span>
+        <span class="v">${S.hasIssues ? S.doneCount + ' 处提示' : '全部通过'}</span></div>
+      <div class="divider"></div>
+      <div class="sect-title">图层结构</div>`;
+    S.layers.slice(0, 8).forEach((L, i) => {
+      html += `<div class="layer-row">
+        <span class="layer-idx">${String(i + 1).padStart(2, '0')}</span>
+        <span class="layer-name">${esc(L.name)}</span>
+      </div>`;
+    });
+    elRightBody.innerHTML = html;
+    return;
+  }
+  const p = S.probe;
+  const kb = (p.size / 1024 / 1024).toFixed(2);
+  let html = `
+    <div class="file-name">${esc(p.filename || '')}</div>
+    <div class="kv"><span class="k">画布</span><span class="v">${p.width} × ${p.height}</span></div>
+    <div class="kv"><span class="k">图层</span><span class="v">${S.layers.length} 个</span></div>
+    <div class="kv"><span class="k">体积</span><span class="v">${kb} MB</span></div>
+    <div class="kv"><span class="k">问题</span><span class="v">${S.issues.length} 个</span></div>
+    <div class="divider"></div>
+    <div class="sect-title">图层结构</div>`;
+  S.layers.slice(0, 10).forEach((L, i) => {
+    html += `<div class="layer-row">
+      <span class="layer-idx">${String(i + 1).padStart(2, '0')}</span>
+      <span class="layer-name">${esc(L.name)}</span>
+    </div>`;
+  });
+  if (S.layers.length > 10) {
+    html += `<div class="layer-row"><span class="layer-idx"></span>
+      <span class="layer-name" style="opacity:.5">… 共 ${S.layers.length} 个</span></div>`;
+  }
+  elRightBody.innerHTML = html;
+}
+
+function renderProgList() {
+  if (!S.layers.length) {
+    elProgList.innerHTML =
+      '<div class="prog-empty">载入 PSD 后，这里显示每个图层的处理进度</div>';
+    return;
+  }
+  elProgList.innerHTML = S.layers.map((L, i) => {
+    const st = L.state || 'wait';
+    // 行内不再用填充条：运行中是左右来回滑的矩形，完成是小段停在左端
+    const line = st === 'run' ? '<span class="row-line run"></span>'
+               : st === 'done' ? '<span class="row-line done"></span>'
+               : '';
+    return `<div class="row">
+      <span class="row-idx">${String(i + 1).padStart(2, '0')}</span>
+      <span class="row-name">${esc(L.name)}</span>
+      <span class="row-bar">${line}</span>
+      <span class="row-detail">${esc(L.detail || '等待')}</span>
+    </div>`;
+  }).join('');
+}
+
+/* ============================================================
+   进度显示
+   真实进度 → 目标值；显示值每帧逼近目标（rAF 追帧），
+   不用 CSS transition，避免"目标变了但条还在慢慢追"的迟滞感。
+   ============================================================ */
+const PV = { target: 0, shown: 0, raf: 0 };
+const REDUCE_MOTION = !!(window.matchMedia &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+let _stageTok = 0;
+
+function paintProgress() {
+  const p = Math.max(0, Math.min(1, PV.shown));
+  elTrack.style.width = (p * 100) + '%';
+  if (elPct) elPct.textContent = Math.round(p * 100) + '%';
+}
+
+function tickProgress() {
+  const d = PV.target - PV.shown;
+  if (Math.abs(d) < 0.0008) {
+    PV.shown = PV.target;
+    paintProgress();
+    PV.raf = 0;
+    return;
+  }
+  PV.shown += d * 0.16;
+  paintProgress();
+  PV.raf = requestAnimationFrame(tickProgress);
+}
+
+function renderProgress() {
+  // 运行中封顶 99%：真完成（setDone）才允许到 100%，
+  // 避免"条满了但文件还没写完"的假象。
+  let t = Math.max(0, Math.min(1, S.progress || 0));
+  if (S.busy) t = Math.min(t, 0.99);
+
+  if (REDUCE_MOTION) {
+    PV.target = t; PV.shown = t; paintProgress();
+  } else {
+    PV.target = t;
+    if (!PV.raf) PV.raf = requestAnimationFrame(tickProgress);
+  }
+
+  const p = PV.target;
+  const running = (S.busy || (p > 0 && p < 1)) && !elTrackBar.classList.contains('done');
+  elTrackBar.classList.toggle('running', !!running);
+  if (elProgSpin) elProgSpin.classList.toggle('on', !!S.busy);
+
+  // 阶段文案交叉淡出淡入，不硬切
+  const txt = S.stage || '';
+  if (elProgStage.textContent !== txt) {
+    const tok = ++_stageTok;
+    elProgStage.style.opacity = '0';
+    setTimeout(() => {
+      if (tok !== _stageTok) return;
+      elProgStage.textContent = txt;
+      elProgStage.style.opacity = '';
+    }, 130);
+  }
+
+  if (elCnt) {
+    if (S.layers && S.layers.length) {
+      const done = S.layers.filter(L => L.state === 'done').length;
+      elCnt.textContent = String(done).padStart(2, '0') + ' / ' +
+                          String(S.layers.length).padStart(2, '0');
+    } else {
+      elCnt.textContent = '—';
+    }
+  }
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* 最近文件：大小与相对时间 */
+function fmtSize(mb) {
+  const v = Number(mb) || 0;
+  if (!v) return '—';
+  return v >= 100 ? v.toFixed(1) + ' MB' : v.toFixed(2) + ' MB';
+}
+function fmtAgo(ts) {
+  const d = Date.now() / 1000 - (Number(ts) || 0);
+  if (!isFinite(d) || d < 0) return '';
+  if (d < 60) return '刚刚';
+  if (d < 3600) return Math.floor(d / 60) + ' 分钟前';
+  if (d < 86400) return Math.floor(d / 3600) + ' 小时前';
+  if (d < 86400 * 30) return Math.floor(d / 86400) + ' 天前';
+  const dt = new Date((Number(ts) || 0) * 1000);
+  return `${dt.getMonth() + 1} 月 ${dt.getDate()} 日`;
+}
+
+/* ============================================================
+   交互
+   ============================================================ */
+elDrop.onclick = () => pyCall('pick_file');
+
+elDrop.ondragover = e => { e.preventDefault(); elDrop.classList.add('over'); };
+elDrop.ondragleave = () => elDrop.classList.remove('over');
+elDrop.ondrop = e => {
+  e.preventDefault();
+  elDrop.classList.remove('over');
+};
+
+$('opt-trim').onclick = () => {
+  S.trim = !S.trim;
+  elTrimBox.classList.toggle('on', S.trim);
+};
+
+$('btn-theme').onclick = () => {
+  const i = THEMES.indexOf(S.theme);
+  setTheme(THEMES[(i + 1) % THEMES.length]);
+};
+
+$('btn-static').onclick = () => {
+  S.paused = !S.paused;
+  $('btn-static').classList.toggle('paused', S.paused);
+  $('static-label').textContent = S.paused ? '静止' : '流动';
+  document.querySelectorAll('.blob').forEach(b => {
+    b.style.animationPlayState = S.paused ? 'paused' : 'running';
+  });
+};
+
+/* 整块面板可点击展开/收起 */
+elProg.style.cursor = 'pointer';
+elProg.onclick = function(e){
+  // 忽略列表内部的滚动操作
+  if (e.target.closest('#prog-list') && e.target.closest('.row')) return;
+  elProg.classList.toggle('open');
+};
+
+elFix.onclick = () => {
+  if (!S.file || S.busy) return;
+  S.busy = true;
+  S.fixStart = performance.now();     // 用于"最短展示时长"，小文件不至于一闪而过
+  elFix.disabled = true;
+  setSpinning(true);
+  setFixLabel('修复中…');
+  elProg.classList.add('open');
+  pyCall('start_fix', { trim: S.trim });
+};
+
+elOpen.onclick = () => pyCall('open_folder');
+
+/* 最近文件：点条目打开，点 × 只删记录。
+   用事件委托，因为列表是 innerHTML 重建的。 */
+elRightBody.onclick = e => {
+  const del = e.target.closest('.recent-del');
+  if (del) {
+    e.stopPropagation();                      // 别触发外层的打开
+    pyCall('remove_recent', Number(del.dataset.del));
+    return;
+  }
+  const item = e.target.closest('.recent-item');
+  if (item) pyCall('open_recent', Number(item.dataset.i));
+};
+
+document.onkeydown = e => {
+  if (e.key === 'Escape' && S.busy) pyCall('cancel');
+};
+
+function setTheme(name) {
+  const c = THEME_COLORS[name] || THEME_COLORS['冰蓝青'];
+  S.theme = name;
+  $('theme-label').textContent = name;
+
+  // 文字颜色：深色背景用白，浅色用黑
+  document.body.classList.toggle('dark', c.dark);
+
+  // 强调色：进度条 / 图层行的 line 动画都跟着主题走
+  const rs = document.documentElement.style;
+  rs.setProperty('--accent', c.accent || '#3f6fe4');
+  rs.setProperty('--accent-2', c.accent2 || '#7ec2ff');
+
+  // 背景底色
+  const aurora = document.getElementById('aurora');
+  aurora.style.setProperty('--bg-base', c.base);
+
+  // 三个光斑颜色
+  document.querySelector('.b1').style.background = c.b1;
+  document.querySelector('.b2').style.background = c.b2;
+  document.querySelector('.b3').style.background = c.b3;
+
+  // 光斑强度：压低到"雾"的程度，避免整片饱和色铺满
+  const blobs = document.querySelectorAll('.blob');
+  blobs.forEach(function(b){
+    b.style.opacity = c.dark ? '0.62' : '0.46';
+  });
+
+  console.log('[theme] 切换到', name, c);
+}
+
+/* ============================================================
+   Python 桥接（PySide6 QWebChannel）
+   ============================================================ */
+/* ============================================================
+   Python 桥接（轮询模式，不依赖 qwebchannel.js）
+   JS 把调用推进 window.__calls，Python 定时取走执行
+   ============================================================ */
+window.__calls = window.__calls || [];
+
+function pyCall(fn, arg) {
+  if (!window.__calls) window.__calls = [];
+  window.__calls.push([fn, arg === undefined ? null : arg]);
+  console.log('[pyCall]', fn, arg);
+}
+
+/* Python 取走调用队列 */
+window.__drainCalls = function(){
+  const out = window.__calls.slice();
+  window.__calls.length = 0;
+  return JSON.stringify(out);
+};
+
+/* 供 Python 调用的接口 */
+window.APP = {
+  setLoading(file) {
+    S.file = file;
+    S.outFile = null; S.outMB = 0; S.doneCount = 0; S.hasIssues = false;
+    setFixLabel('开始修复');
+    setSpinning(false);
+    S.probe = null; S.issues = []; S.layers = [];
+    S.progress = 0; S.stage = '检测中';
+    elTrackBar.classList.remove('done');
+    // 换文件时进度直接归零，不做回退动画；刻度按新图层数重建
+    PV.target = 0; PV.shown = 0; paintProgress();
+    elDropMain.textContent = file;
+    elDropSub.textContent = '正在检测…';
+    setStatus('正在检测…');
+    renderDiag(); renderRight(); renderProgList(); renderProgress();
+  },
+  setProbe(data) {
+    S.probe = data;
+    S.issues = data.issues || [];
+    S.layers = (data.layers || []).map(n => ({
+      name: n, state: 'wait', frac: 0, detail: '等待'
+    }));
+    S.stage = S.issues.length ? `发现 ${S.issues.length} 个问题` : '检测完成';
+    S.progress = 0;
+    elDropSub.textContent =
+      `${(data.size / 1024 / 1024).toFixed(2)} MB · ${data.width} × ${data.height}`;
+    elFix.disabled = false;
+    // 结构没问题时不要诱导用户"修"一遍好文件：
+    // 勾了裁切就只剩裁切有意义，没勾就干脆禁用
+    if (S.issues.length === 0) {
+      if (S.trim) {
+        setFixLabel('仅裁切并导出');
+        elFix.disabled = false;
+      } else {
+        setFixLabel('无需修复');
+        elFix.disabled = true;
+      }
+    } else {
+      setFixLabel('开始修复');
+    }
+    setSpinning(false);
+    elOpen.disabled = false;   // 载入即可用（定位到源文件）
+    // 有图层时自动展开进度面板
+    if (S.layers.length) elProg.classList.add('open');
+    setStatus(`${(data.size / 1024 / 1024).toFixed(2)} MB · ${data.width} × ${data.height} · ${S.layers.length} 个图层`);
+    renderDiag(); renderRight(); renderProgList(); renderProgress();
+  },
+  setStage(t) {
+    S.stage = t;
+    const r = STAGE_RANGE[t];
+    if (r && S.progress < r[0]) S.progress = r[0];   // 换阶段时推进到该段起点
+    renderProgress();
+  },
+  /* 最近文件列表（Python 侧推送，含 name/size/time/exists） */
+  setRecent(list) {
+    S.recent = Array.isArray(list) ? list : [];
+    renderRight();       // 只在空状态时才真正用得上，但载入后也可能变（有文件时不显示）
+  },
+  /* 注意：Python 侧 post("APP.setProgress", [i,total,name,detail]) 传的是数组，
+     js_obj 只会传一个参数进来，所以这里必须兼容两种形态。 */
+  setProgress(a, b, c, d) {
+    let i, total, name, detail;
+    if (Array.isArray(a)) {
+      i = a[0]; total = a[1]; name = a[2]; detail = a[3];
+    } else {
+      i = a; total = b; name = c; detail = d;
+    }
+    total = +total || 0;
+    i = +i || 0;
+    S.progress = mapProgress(total ? i / total : 0);
+
+    if (name) {
+      const k = S.layers.findIndex(L => L.name === name);
+      if (k >= 0) {
+        S.layers[k].state = 'run';
+        S.layers[k].frac = total ? i / total : 0;
+        S.layers[k].detail = detail || '处理中';
+        // 它之前的图层视为已完成
+        for (let j = 0; j < k; j++) {
+          if (S.layers[j].state !== 'done') {
+            S.layers[j].state = 'done';
+            S.layers[j].frac = 1;
+            S.layers[j].detail = '完成';
+          }
+        }
+      }
+    } else if (i >= total && total > 0) {
+      S.layers.forEach(L => {
+        if (L.state !== 'done') { L.state = 'done'; L.frac = 1; L.detail = '完成'; }
+      });
+    }
+    renderProgList(); renderProgress();
+  },
+  setDone(data) {
+    // 结果先落地，避免延时期间又被别的消息覆盖
+    S.outFile = data.filename;
+    S.outMB = data.mb;
+    S.doneCount = data.count;
+    S.hasIssues = data.hasIssues;
+
+    // 最短展示 600ms：小文件秒完成时，条不会从 0 直接闪到 100
+    const elapsed = S.fixStart ? (performance.now() - S.fixStart) : 1e9;
+    const wait = REDUCE_MOTION ? 0 : Math.max(0, 600 - elapsed);
+
+    const finish = () => {
+      S.busy = false;
+      S.progress = 1;
+
+      S.stage = S.hasIssues
+        ? `完成 · ${S.doneCount} 处提示`
+        : '完成 · 结构校验通过';
+      S.layers.forEach(L => { L.state = 'done'; L.frac = 1; L.detail = '完成'; });
+
+      // 按钮：变成「再修一次」
+      elFix.disabled = false;
+      setSpinning(false);
+      setFixLabel('再修一次');
+      elOpen.disabled = false;
+
+      // 底部进度条：完成态（绿色 + 一次性扫光）
+      elTrackBar.classList.remove('running');
+      elTrackBar.classList.add('done');
+
+      // 拖放区改成完成态
+      if (elDropMain) elDropMain.textContent = '✓ 修复完成';
+      if (elDropSub) elDropSub.textContent = S.outFile;
+
+      setStatus(`已保存 ${S.outFile} · ${S.outMB.toFixed(2)} MB`);
+
+      renderDiag();       // 加完成横幅
+      renderRight();      // 右栏换成输出文件
+      renderProgList();
+      renderProgress();
+    };
+
+    if (wait > 0) setTimeout(finish, wait);
+    else finish();
+  },
+  setFailed(msg) {
+    S.busy = false;
+    S.stage = '修复失败';
+    elFix.disabled = false;
+    setSpinning(false);
+    setFixLabel('重试');
+    elTrackBar.classList.remove('running');
+    setStatus(msg);
+    renderProgress();
+  },
+  setTheme
+};
+
+/* ============================================================
+   拖拽
+   注意：Qt WebEngine 没有 Electron 的 File.path，JS 侧拿不到本地路径。
+   正常路径由 Python 侧的 DropCatcher 事件过滤器直接截获（见 psd_repair_qt.py）。
+   这里的 drop 只是兜底：万一 Qt 层没截到，就退回弹选择框，保证功能可用。
+   ============================================================ */
+document.addEventListener('dragover', e => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+});
+
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  elDrop.classList.remove('over');
+  if (S.busy) return;
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || !files.length) return;
+  // 兜底：拿不到路径就弹系统选择框（用户点一次即可）
+  pyCall('pick_file');
+});
+
+/* 初始化 */
+setTheme('冰蓝青');
+renderDiag(); renderRight(); renderProgList(); renderProgress();
+</script>
+</body>
+</html>
