@@ -1,0 +1,83 @@
+    def _glass_panel(self, img, frost, box, radius,
+                     blur_src=None, white=0.045, contrast=1.0):
+        """按 CSS backdrop-filter 的思路合成一块玻璃
+
+        核心（来自 https://gitee.com/greyd097/yzrt 纯CSS液态玻璃）：
+          1. backdrop-filter: blur -> 对背后做轻微模糊
+          2. background: rgba(255,255,255,0.04) -> 只加极淡的白
+          3. 四边 inset 白色高光 + 内侧黑色细阴影
+          4. 45° 白色到透明的斜向反光
+        这样背景几乎原样透出，质感全靠高光塑造。
+        """
+        W, H = img.size
+        x1, y1, x2, y2 = [int(v) for v in box]
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(W, x2), min(H, y2)
+        if x2 - x1 < 4 or y2 - y1 < 4:
+            return
+
+        src = (blur_src or frost).crop((x1, y1, x2, y2))
+        # 极淡白雾：rgba(255,255,255,0.04)
+        plate = Image.new("RGB", src.size, (255, 255, 255))
+        body = Image.blend(src, plate, white)
+        # 浅色玻璃：提亮 + 白雾，让面板从背景里浮起来
+        plate2 = Image.new("RGB", src.size, (246, 248, 252))
+        body = Image.blend(body, plate2, 0.30)
+
+        # contrast 提升通透感（近 CSS filter: contrast）
+        if contrast != 1.0:
+            import numpy as np
+            a = np.array(body).astype(np.float32)
+            a = (a - 128.0) * contrast + 128.0
+            np.clip(a, 0, 255, out=a)
+            body = Image.fromarray(a.astype("uint8"))
+
+        # 圆角蒙版
+        mask = Image.new("L", src.size, 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            [0, 0, src.size[0] - 1, src.size[1] - 1], radius=radius, fill=255)
+        img.paste(body, (x1, y1), mask)
+
+        # ---- 玻璃边缘塑造（关键）
+        d = ImageDraw.Draw(img, "RGBA")
+        w = src.size[0]
+        hh = src.size[1]
+
+        # 外侧极淡描边
+        d.rounded_rectangle([x1, y1, x2 - 1, y2 - 1], radius=radius,
+                            outline=(255, 255, 255, 210), width=1)
+
+        # 上边缘高光（最亮）
+        d.line([(x1 + radius, y1 + 1), (x2 - radius, y1 + 1)],
+               fill=(255, 255, 255, 255), width=1)
+        # 左边缘次亮
+        d.line([(x1 + 1, y1 + radius), (x1 + 1, y2 - radius)],
+               fill=(255, 255, 255, 200), width=1)
+        # 下边缘与右边缘：暗（内阴影感）
+        d.line([(x1 + radius, y2 - 2), (x2 - radius, y2 - 2)],
+               fill=(120, 140, 165, 40), width=1)
+        d.line([(x2 - 2, y1 + radius), (x2 - 2, y2 - radius)],
+               fill=(120, 140, 165, 34), width=1)
+
+        # 外侧极淡投影，制造浮起感（浅底上很关键）
+        shadow = Image.new("RGBA", (w + 8, hh + 10), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shadow)
+        sd.rounded_rectangle([4, 4, w + 3, hh + 7], radius=radius,
+                             fill=(96, 120, 150, 26))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(4))
+        img.paste(shadow, (x1 - 4, y1 - 2), shadow)
+
+        # 45° 斜向反光（左上角一小片亮斑）
+        gloss = Image.new("RGBA", (w, hh), (0, 0, 0, 0))
+        gd = ImageDraw.Draw(gloss)
+        band = max(8, int(hh * 0.45))
+        gd.polygon([(0, 0), (band, 0), (0, band)],
+                   fill=(255, 255, 255, 26))
+        gd.polygon([(w, hh), (w - band // 2, hh), (w, hh - band // 2)],
+                   fill=(255, 255, 255, 14))
+        gloss = gloss.filter(ImageFilter.GaussianBlur(3))
+        img.paste(Image.alpha_composite(
+            img.crop((x1, y1, x2, y2)).convert("RGBA"),
+            gloss.crop((0, 0, w, hh))).convert("RGB"),
+            (x1, y1), mask)
+

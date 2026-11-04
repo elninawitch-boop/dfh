@@ -1,0 +1,58 @@
+# ============================================================
+# PSD Repair Tool - Git ignore rules
+# Repo contains SOURCE + DOCS only.
+# Build artifacts and large assets must never be committed.
+# NOTE: keep this file pure ASCII. Non-ASCII comments made
+# git fail to parse the rules on a zh-CN Windows locale.
+# ============================================================
+
+# ---- Build output (~1.4 GB, never commit) ----
+app/
+qt_rebuild/
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- Large assets / visual reference ----
+# reference/: 297 MB design-system sources, reference only
+# _bootshots/: 141 MB boot-animation frame captures
+# archive/: 103 old one-off scripts, kept locally
+reference/
+_bootshots/
+archive/
+
+# ---- Backup files ----
+*.bak
+*.bak-*
+*_backup.py
+*_broken.py
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# ---- Temp files ----
+*.tmp
+*.log
+debug.log
+_*.png
+_*.html
+
+# ---- Test samples (never commit PSD binaries) ----
+*.psd
+!qt_ui/boot_icon.png
+
+# ---- Legacy scripts (see handover doc section 3, keep local only) ----
+psd_repair_gui.py
+bg_render.py
+bg_render_old.py
+gl_glass.py
+text_render.py
+
+# ---- Packaging intermediates ----
+dist/
+build/
+*.spec.bak
